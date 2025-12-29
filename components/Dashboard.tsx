@@ -1,14 +1,17 @@
 
-import React, { useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useData } from '../DataContext';
+import { db } from '../firebase';
+import { ref, remove, set } from 'firebase/database';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-  PieChart, Pie, Legend, AreaChart, Area
+  PieChart, Pie, Legend, AreaChart, Area, Line
 } from 'recharts';
 import {
-  TrendingUp, Activity, AlertTriangle,
-  Truck, CheckCircle, Clock, FileText, Package, AlertOctagon, DollarSign
+  Truck, CheckCircle, Clock, FileText, Package, AlertOctagon, DollarSign, Trash2, MapPin, Box,
+  TrendingUp, Activity, AlertTriangle, RotateCcw
 } from 'lucide-react';
+import Swal from 'sweetalert2';
 
 const COLORS = {
   Restock: '#22c55e', // Green
@@ -20,44 +23,278 @@ const COLORS = {
 };
 
 const Dashboard: React.FC = () => {
-  const { items, ncrReports } = useData();
 
-  // 1. Operation Pipeline Metrics (5 Steps)
+  const { items, ncrReports, runDataIntegrityCheck } = useData();
+
+  const handleFactoryReset = async () => {
+    // 1. Password Check
+    const { value: password } = await Swal.fire({
+      title: 'ยืนยันรหัสผ่าน (Authentication)',
+      text: "กรุณากรอกรหัสผ่านเพื่อล้างข้อมูลทั้งหมด",
+      input: 'password',
+      inputPlaceholder: 'Enter password',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'ตรวจสอบ (Verify)',
+      cancelButtonText: 'ยกเลิก (Cancel)',
+      inputAttributes: {
+        autocapitalize: 'off',
+        autocorrect: 'off'
+      }
+    });
+
+    if (!password) return; // User cancelled
+
+    if (password !== '888') {
+      await Swal.fire({
+        title: 'รหัสผ่านไม่ถูกต้อง',
+        text: 'Access Denied',
+        icon: 'error',
+        confirmButtonColor: '#ef4444'
+      });
+      return;
+    }
+
+    // 2. Final Confirmation
+    const result = await Swal.fire({
+      title: 'คำเตือน: ลบข้อมูลทั้งหมด?',
+      text: "ข้อมูลทั้งหมดจะหายไปถาวร ไม่สามารถกู้คืนได้! ยืนยันที่จะดำเนินการต่อหรือไม่?",
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'ใช่, ฉันต้องการลบข้อมูลทั้งหมด',
+      cancelButtonText: 'ยกเลิก'
+    });
+
+    if (result.isConfirmed) {
+      // 3. Execute Reset
+      try {
+        Swal.fire({
+          title: 'กำลังล้างข้อมูล...',
+          text: 'Please wait while we reset the system',
+          allowOutsideClick: false,
+          didOpen: () => {
+            Swal.showLoading();
+          }
+        });
+
+        await remove(ref(db, 'return_records'));
+        await remove(ref(db, 'ncr_reports'));
+        await set(ref(db, 'ncr_counter'), 0);
+
+        await Swal.fire(
+          'เสร็จสิ้น!',
+          'ระบบได้รับการรีเซ็ตเรียบร้อยแล้ว',
+          'success'
+        );
+        location.reload();
+      } catch (error) {
+        console.error(error);
+        Swal.fire(
+          'เกิดข้อผิดพลาด',
+          'ไม่สามารถล้างข้อมูลได้ กรุณาลองใหม่',
+          'error'
+        );
+      }
+    }
+  };
+
+  const handleIntegrityCheck = async () => {
+    // 1. Password Check
+    const { value: password } = await Swal.fire({
+      title: 'ยืนยันรหัสผ่าน (Authentication)',
+      text: "กรุณากรอกรหัสผ่านเพื่อตรวจสอบและล้างข้อมูลขยะ",
+      input: 'password',
+      inputPlaceholder: 'Enter password',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#3b82f6', // Blue for Sync
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'ยืนยัน (Verify)',
+      cancelButtonText: 'ยกเลิก (Cancel)',
+      inputAttributes: {
+        autocapitalize: 'off',
+        autocorrect: 'off'
+      }
+    });
+
+    if (!password) return;
+
+    if (password !== '888') {
+      await Swal.fire({
+        title: 'รหัสผ่านไม่ถูกต้อง',
+        text: 'Access Denied',
+        icon: 'error',
+        confirmButtonColor: '#ef4444'
+      });
+      return;
+    }
+
+    // 2. Execute Check
+    Swal.fire({
+      title: 'กำลังตรวจสอบระบบ...',
+      text: 'Scanning for orphaned records...',
+      allowOutsideClick: false,
+      didOpen: () => {
+        Swal.showLoading();
+      }
+    });
+
+    try {
+      const count = await runDataIntegrityCheck();
+
+      if (count > 0) {
+        await Swal.fire(
+          'ดำเนินการเสร็จสิ้น',
+          `ลบข้อมูลตกค้าง (Orphaned Records) ไปทั้งสิ้น ${count} รายการ`,
+          'success'
+        );
+      } else {
+        await Swal.fire(
+          'ระบบปกติ',
+          'ไม่พบข้อมูลตกค้างในระบบ',
+          'success'
+        );
+      }
+    } catch (error) {
+      console.error(error);
+      Swal.fire(
+        'เกิดข้อผิดพลาด',
+        'ไม่สามารถตรวจสอบระบบได้',
+        'error'
+      );
+    }
+  };
+
+  // 1. Operation Pipeline Metrics (Aligned with New 6-Step Workflow)
   const pipeline = useMemo(() => {
     return {
-      requested: items.filter(i => i.status === 'Requested').length,
-      received: items.filter(i => i.status === 'Received').length,
-      graded: items.filter(i => i.status === 'Graded').length, // รอเอกสาร
-      documented: items.filter(i => i.status === 'Documented').length, // รอจบงาน
-      completed: items.filter(i => i.status === 'Completed').length
+      requests: items.filter(i => i.status === 'Draft' || i.status === 'Requested').length,      // Step 1: New Requests
+      logistics: items.filter(i => i.status === 'InTransitHub').length,                          // Step 2: In Transport
+      receiving: items.filter(i => i.status === 'ReceivedAtHub' || i.status === 'Received').length, // Step 3: At Hub
+      qc: items.filter(i => i.status === 'QCPassed' || i.status === 'QCFailed' || i.status === 'Graded').length, // Step 4: QC Done
+      disposition: items.filter(i => i.status === 'ReturnToSupplier' || i.status === 'Documented').length, // Step 5: Preparing/Docs
+      completed: items.filter(i => i.status === 'Completed').length    // Step 6: Closed
     };
   }, [items]);
 
-  // 2. Financial Metrics
+  // 1.1 Stock Summary (Inventory Snapshot)
+  const stockSummary = useMemo(() => {
+    // Helper to calc on-hand (In - Out)
+    const calcOnHand = (disp: string) => {
+      // Logic mirrors Inventory.tsx: IN (Graded) - OUT (Documented/Completed)
+      // Note: In Dashboard, we simplify to "Current Status" based.
+      // Items that are "QCPassed" or "QCFailed" or "Graded" but NOT yet "ReturnToSupplier" or "Completed" are theoretically "On Hand" at Hub?
+      // OR specifically items marked with that disposition that haven't left.
+
+      // Let's use the 'Inventory' logic: 
+      // IN = DateGraded exists
+      // OUT = DateDocumented or DateCompleted exists
+      // OnHand = IN - OUT
+
+      let inCount = 0;
+      let outCount = 0;
+
+      items.filter(i => i.disposition === disp).forEach(i => {
+        // Fix for Negative Stock:
+        // Only count as "In" if dateGraded exists (Standard Flow)
+        // Only count as "Out" if dateGraded exists AND (dateDocumented or dateCompleted) exists.
+        // This prevents "Direct Returns" (which have no dateGraded) from being counted as "Out" without an "In".
+        if (i.dateGraded) {
+          inCount++;
+          if (i.dateDocumented || i.dateCompleted) outCount++;
+        }
+      });
+
+      return inCount - outCount;
+    };
+
+    return {
+      restock: calcOnHand('Restock'),
+      rtv: calcOnHand('RTV'),
+      claim: calcOnHand('Claim'),
+      internal: calcOnHand('InternalUse'),
+      scrap: calcOnHand('Recycle'),
+      // New Metric: Direct Return (Count of items that bypassed Hub QC and were sent back directly)
+      directReturn: items.filter(i => i.disposition === 'RTV' && !i.dateGraded && (i.dateDocumented || i.dateCompleted)).length
+    };
+  }, [items]);
+
+  // 1.2 Inbound Collection Stats (Synced with COL Report)
+  const collectionStats = useMemo(() => {
+    // Exact Filter Logic from COLReport.tsx
+    const collectionItems = items.filter(item => {
+      // Must NOT be NCR (unless LOGISTICS type, but usually COL items are distinct)
+      if (item.documentType === 'NCR' || (item.ncrNumber && item.documentType !== 'LOGISTICS')) {
+        return false;
+      }
+      return true;
+    });
+
+    return {
+      requests: collectionItems.filter(i => i.status === 'Requested').length,
+      assigned: collectionItems.filter(i => i.status === 'COL_JobAccepted').length,
+      collected: collectionItems.filter(i => i.status === 'COL_BranchReceived').length,
+      consolidated: collectionItems.filter(i => i.status === 'COL_Consolidated').length,
+      transit: collectionItems.filter(i => i.status === 'COL_InTransit').length,
+      // Hub Received + Documented = Step 6 (Pending Closure)
+      pendingCompletion: collectionItems.filter(i => i.status === 'COL_HubReceived' || i.status === 'COL_Documented').length,
+      completed: collectionItems.filter(i => i.status === 'Completed').length
+    };
+  }, [items]);
+
+  // 2. Financial Metrics & Cost Analysis
   const financials = useMemo(() => {
-    const totalIntakeValue = items.reduce((acc, i) => acc + (i.priceBill || 0) * i.quantity, 0);
+    let totalIntakeValue = 0;
+    let recoveryValue = 0;
+    let rtvValue = 0;
+    let ncrCost = 0;
 
-    const recoveryValue = items
-      .filter(i => i.disposition === 'Restock')
-      .reduce((acc, i) => acc + (i.priceSell || 0) * i.quantity, 0);
+    const costByResponsible: Record<string, number> = {};
+    const costBySource: Record<string, number> = {};
 
-    const rtvValue = items
-      .filter(i => i.disposition === 'RTV')
-      .reduce((acc, i) => acc + (i.priceBill || 0) * i.quantity, 0);
+    // Calculate from Items (Returns)
+    items.forEach(i => {
+      const qty = i.quantity || 0;
+      const price = i.priceBill || 0;
+      totalIntakeValue += price * qty;
 
-    // FIX: Make backward-compatible with old flat data structure
-    // Filter out Canceled reports
-    const ncrCost = ncrReports
-      .filter(n => n.status !== 'Canceled')
-      .reduce((acc, n) => {
-        const cost = n.item?.costAmount || (n as any).costAmount || 0;
-        return acc + cost;
-      }, 0);
+      if (i.disposition === 'Restock') recoveryValue += (i.priceSell || 0) * qty;
+      if (i.disposition === 'RTV') rtvValue += price * qty;
 
-    return { totalIntakeValue, recoveryValue, rtvValue, ncrCost };
+      if (i.hasCost && i.costAmount) {
+        // Track direct costs from items
+        const responsible = i.costResponsible || 'Unassigned';
+        const source = i.problemSource || 'Other';
+        costByResponsible[responsible] = (costByResponsible[responsible] || 0) + i.costAmount;
+        costBySource[source] = (costBySource[source] || 0) + i.costAmount;
+      }
+    });
+
+    // Calculate from NCR Reports
+    ncrReports.filter(n => n.status !== 'Canceled').forEach(n => {
+      // Use cost from Item if available, else from report root
+      const cost = n.item?.costAmount || (n as { costAmount?: number }).costAmount || 0;
+      // Only add if not already counted via items to avoid double counting? 
+      // For safety in this hybrid system, we'll assume NCR reports might cover things NOT in items list or additional costs.
+      // But typically they are linked. Let's just sum NCR specific costs if we consider them "Extra".
+      // Simplification: Just sum them for "Cost Impact" visualisation.
+      ncrCost += cost;
+    });
+
+    // Convert to Chart Data
+    const costResponsibleData = Object.entries(costByResponsible)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5); // Top 5
+
+    return { totalIntakeValue, recoveryValue, rtvValue, ncrCost, costResponsibleData };
   }, [items, ncrReports]);
 
-  // 3. Disposition Mix Data
+  // 3. Disposition Mix
   const dispositionData = useMemo(() => {
     const counts: Record<string, number> = { Restock: 0, RTV: 0, Recycle: 0, Claim: 0, InternalUse: 0 };
     items.forEach(item => {
@@ -75,224 +312,494 @@ const Dashboard: React.FC = () => {
     ].filter(i => i.value > 0);
   }, [items]);
 
-  // 4. NCR Source Analysis (Root Cause)
-  const ncrSourceData = useMemo(() => {
-    const counts: Record<string, number> = {};
-    ncrReports
-      .filter(n => n.status !== 'Canceled')
-      .forEach(report => {
-        // FIX: Make backward-compatible with old flat data structure
-        let source = report.item?.problemSource || (report as any).problemSource || 'ไม่ระบุ';
-        if (source.includes('ขนส่ง')) source = 'ขนส่ง (Transport)';
-        else if (source.includes('คลัง')) source = 'คลังสินค้า (WH)';
-        else if (source.includes('ลูกค้า')) source = 'ลูกค้า (Customer)';
-        else if (source.includes('บัญชี')) source = 'บัญชี/Admin';
 
-        counts[source] = (counts[source] || 0) + 1;
-      });
 
-    return Object.keys(counts)
-      .map(key => ({ name: key, value: counts[key] }))
+  // 5. NCR Root Cause & Process Stats
+  const ncrStats = useMemo(() => {
+    const rootCauses: Record<string, number> = {};
+    const causes = { Packaging: 0, Transport: 0, Operation: 0, Environment: 0 };
+
+    ncrReports.filter(n => n.status !== 'Canceled').forEach(report => {
+      // Root Cause
+      let source = report.item?.problemSource || (report as { problemSource?: string }).problemSource || 'Other';
+
+      // Normalize Source (Merge Other/Others)
+      const s = source.trim().toLowerCase();
+      if (s === 'other' || s === 'others' || s.startsWith('other') || s.includes('อื่นๆ') || s === '-') source = 'อื่นๆ';
+      else if (s === 'customer') source = 'ลูกค้า (Customer)';
+      else if (s === 'transport' || s.includes('transport')) source = 'ขนส่ง (Transport)';
+      else if (source.startsWith('ระหว่างขนส่ง')) source = 'ขนส่ง (Transport)';
+
+      rootCauses[source] = (rootCauses[source] || 0) + 1;
+
+      // Process Causes
+      if (report.causePackaging) causes.Packaging++;
+      if (report.causeTransport) causes.Transport++;
+      if (report.causeOperation) causes.Operation++;
+      if (report.causeEnv) causes.Environment++;
+    });
+
+    const rootCauseData = Object.entries(rootCauses)
+      .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
+
+    const causeData = [
+      { name: 'Packaging', value: causes.Packaging },
+      { name: 'Transport', value: causes.Transport },
+      { name: 'Operation', value: causes.Operation },
+      { name: 'Environment', value: causes.Environment },
+    ].filter(i => i.value > 0);
+
+    return { rootCauseData, causeData };
   }, [ncrReports]);
 
   return (
-    <div className="p-6 space-y-8 animate-fade-in pb-10">
+    <div className="p-6 space-y-8 animate-fade-in pb-20">
 
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">สรุปผลการปฏิบัติงาน (Operation Performance)</h2>
-          <p className="text-slate-500 text-sm">ติดตามสถานะงานคงค้าง มูลค่าความเสียหาย และสถิติ NCR</p>
+          <p className="text-slate-500 text-sm">ติดตามสถานะงานคงค้าง (Pipeline), สต็อกคงเหลือ (Inventory), และวิเคราะห์ปัญหา (Analysis)</p>
         </div>
         <div className="bg-blue-50 px-4 py-2 rounded-lg border border-blue-100 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-          <span className="text-sm font-bold text-blue-700">Realtime Dashboard</span>
+          <span className="text-sm font-bold text-blue-700">Live Status</span>
         </div>
       </div>
 
-      {/* 1. PIPELINE FLOW (Operations Hub) */}
+      {/* 1. INBOUND COLLECTION PIPELINE (New) */}
+      <div>
+        <h3 className="text-sm font-bold text-teal-600 uppercase tracking-wider mb-3 flex items-center gap-2">
+          <Truck className="w-4 h-4" /> ระบบงานรับสินค้า (Inbound Collection System)
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+          <PipelineCard step="1" title="ใบสั่งงาน (Request)" count={collectionStats.requests} icon={FileText} variant="teal" desc="รอจ่ายงาน" />
+          <PipelineCard step="2" title="รับงาน (Job)" count={collectionStats.assigned} icon={MapPin} variant="blue" desc="รถเข้ารับ" />
+          <PipelineCard step="3" title="รับของ (Collected)" count={collectionStats.collected} icon={Box} variant="emerald" desc="เข้าสาขา" />
+          <PipelineCard step="4" title="จุดพัก (Hub)" count={collectionStats.consolidated} icon={Package} variant="purple" desc="รอขนส่ง" />
+          <PipelineCard step="5" title="ขนส่ง (Transit)" count={collectionStats.transit} icon={Truck} variant="indigo" desc="เข้า Ops Hub" />
+          <PipelineCard step="6" title="รอปิดงาน (Pending)" count={collectionStats.pendingCompletion} icon={Clock} variant="amber" desc="Direct/Docs" />
+          <PipelineCard step="7" title="จบงาน (Completed)" count={collectionStats.completed} icon={CheckCircle} variant="rose" desc="สำเร็จ" />
+        </div>
+      </div>
+
+      {/* 2. OPERATIONS HUB PIPELINE */}
       <div>
         <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-          <Activity className="w-4 h-4" /> สถานะงานคงค้าง (Work in Progress Pipeline)
+          <Activity className="w-4 h-4" /> ศูนย์ปฏิบัติการคืนสินค้า (Return Operations Hub)
         </h3>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          <PipelineCard
-            step="1" title="แจ้งคืน (Request)" count={pipeline.requested}
-            icon={FileText} color="bg-slate-100 text-slate-600"
-            desc="รอรับเข้า"
-          />
-          <PipelineCard
-            step="2" title="รับสินค้า (Intake)" count={pipeline.received}
-            icon={Package} color="bg-amber-50 text-amber-600 border-amber-200"
-            desc="รอ QC" isAlert={pipeline.received > 20}
-          />
-          <PipelineCard
-            step="3" title="ตรวจสอบ (QC)" count={pipeline.graded}
-            icon={Activity} color="bg-blue-50 text-blue-600 border-blue-200"
-            desc="รอออกเอกสาร"
-          />
-          <PipelineCard
-            step="4" title="เอกสาร (Docs)" count={pipeline.documented}
-            icon={FileText} color="bg-purple-50 text-purple-600 border-purple-200"
-            desc="รอปิดงาน"
-          />
-          <PipelineCard
-            step="5" title="จบงาน (Done)" count={pipeline.completed}
-            icon={CheckCircle} color="bg-green-50 text-green-600 border-green-200"
-            desc="รายการสำเร็จ"
-          />
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <PipelineCard step="1" title="แจ้งคืน (Request)" count={pipeline.requests} icon={FileText} variant="slate" desc="รออนุมัติ" />
+          <PipelineCard step="2" title="ขนส่ง (Logistics)" count={pipeline.logistics} icon={Truck} variant="amber" desc="ระหว่างทาง" />
+          <PipelineCard step="3" title="รับเข้า (Receive)" count={pipeline.receiving} icon={Package} variant="blue" desc="ถึง Hub" />
+          <PipelineCard step="4" title="ตรวจสอบ (QC)" count={pipeline.qc} icon={Activity} variant="purple" desc="รอคัดแยก" />
+          <PipelineCard step="5" title="คลัง/เอกสาร" count={pipeline.disposition} icon={FileText} variant="indigo" desc="รอปิดงาน" />
+          <PipelineCard step="6" title="ปิดงาน (Done)" count={pipeline.completed} icon={CheckCircle} variant="emerald" desc="สำเร็จ" />
         </div>
       </div>
 
-      {/* 2. FINANCIAL & NCR OVERVIEW */}
+      {/* 2. INVENTORY STOCK SUMMARY (New Section) */}
+      <div>
+        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
+          <Package className="w-4 h-4" /> สรุปสต็อกคงคลัง (Inventory On-Hand)
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <StockCard title="สินค้าขาย (Sellable)" count={stockSummary.restock} variant="green" icon={CheckCircle} subTitle="Fully Recovered" />
+          <StockCard title="สินค้าคืน (RTV)" count={stockSummary.rtv} variant="orange" icon={Truck} subTitle="To Vendor" />
+          <StockCard title="เคลม (Claim)" count={stockSummary.claim} variant="blue" icon={AlertTriangle} subTitle="Awaiting Claim" />
+          <StockCard title="ใช้ภายใน (Internal)" count={stockSummary.internal} variant="purple" icon={Box} subTitle="In-House Use" />
+          <StockCard title="ซาก (Scrap)" count={stockSummary.scrap} variant="red" icon={Trash2} subTitle="Scrapped" />
+          <StockCard title="ส่งคืนตรง (Direct)" count={stockSummary.directReturn} variant="slate" icon={RotateCcw} subTitle="Bypassed Hub" />
+        </div>
+      </div>
+
+      {/* 3. FINANCIAL PERFORMANCE */}
       <div>
         <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2">
           <DollarSign className="w-4 h-4" /> ประสิทธิภาพทางการเงิน (Financial Impact)
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            title="มูลค่ารับเข้า (Total Intake)"
-            value={`฿${financials.totalIntakeValue.toLocaleString()}`}
-            subText="มูลค่ารวมตามหน้าบิล"
-            icon={Package}
-            color="bg-slate-700"
-          />
-          <StatCard
-            title="มูลค่ากู้คืน (Recovery)"
-            value={`฿${financials.recoveryValue.toLocaleString()}`}
-            subText="จากการนำกลับมาขาย (Restock)"
-            icon={TrendingUp}
-            color="bg-green-600"
-          />
-          <StatCard
-            title="มูลค่าคืนเครดิต (RTV)"
-            value={`฿${financials.rtvValue.toLocaleString()}`}
-            subText="ส่งคืนผู้จำหน่าย/โรงงาน"
-            icon={Truck}
-            color="bg-amber-500"
-          />
-          <StatCard
-            title="ต้นทุนความเสียหาย NCR"
-            value={`฿${financials.ncrCost.toLocaleString()}`}
-            subText={`จาก NCR ${ncrReports.filter(n => n.status !== 'Canceled').length} รายการ`}
-            icon={AlertOctagon}
-            color="bg-red-500"
-            isAlert
-          />
+          < StatCard title="Total Intake" value={`฿${financials.totalIntakeValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} subText="มูลค่ารับเข้าทั้งระบบ" icon={Package} variant="dark" />
+          <StatCard title="Recovery Value" value={`฿${financials.recoveryValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} subText="รายได้จากการขายคืน (Restock)" icon={TrendingUp} variant="green" />
+          <StatCard title="RTV Credit" value={`฿${financials.rtvValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} subText="เครดิตจากการส่งคืน (RTV)" icon={Truck} variant="orange" />
+          <StatCard title="Cost Impact" value={`฿${financials.ncrCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} subText="มูลค่าความเสียหาย (NCR & Costs)" icon={AlertOctagon} variant="red" />
         </div>
       </div>
 
-      {/* 3. CHARTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Disposition Mix */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col">
-          <div className="mb-4">
-            <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <CheckCircle className="w-5 h-5 text-blue-600" />
-              การตัดสินใจ (Disposition Mix)
-            </h3>
-            <p className="text-xs text-slate-500">สัดส่วนปลายทางของสินค้าที่ผ่าน QC</p>
+
+        {/* 3. TRENDS & ANALYSIS (Main Chart) - Spans 2 Columns */}
+        <div className="lg:col-span-2 bg-white p-8 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col">
+          <div className="mb-8 flex flex-col justify-between items-start gap-2">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-1.5 h-8 bg-indigo-600 rounded-full"></div>
+                <h3 className="text-xl font-bold text-slate-800">
+                  แนวโน้มการรับคืนและมูลค่า (Return Trends)
+                </h3>
+              </div>
+              <p className="text-sm text-slate-400 pl-4">เปรียบเทียบปริมาณสินค้า (ชิ้น) กับมูลค่าความเสียหาย (บาท)</p>
+            </div>
+            {/* Custom Legend */}
+            <div className="flex items-center gap-6 pl-4 mt-2">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-indigo-500"></span>
+                <span className="text-xs font-bold text-slate-600">ปริมาณรับเข้า (Qty)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-amber-500 border-2 border-white ring-1 ring-amber-500"></span>
+                <span className="text-xs font-bold text-slate-600">มูลค่าความเสียหาย (Cost)</span>
+              </div>
+            </div>
           </div>
 
-          <div className="flex-1 min-h-[250px] relative">
+          <div className="flex-1 min-h-[350px] w-full">
+            {/* Mock Data for Trend - In real app, compute from 'items' dates */}
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={[
+                { name: 'Mon', qty: 120, cost: 5000 },
+                { name: 'Tue', qty: 132, cost: 4500 },
+                { name: 'Wed', qty: 101, cost: 8000 },
+                { name: 'Thu', qty: 134, cost: 2000 },
+                { name: 'Fri', qty: 190, cost: 6000 },
+                { name: 'Sat', qty: 230, cost: 9000 },
+                { name: 'Sun', qty: 210, cost: 12000 },
+              ]}>
+                <defs>
+                  <linearGradient id="colorQty" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} dy={10} />
+                <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12 }} />
+                <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: '#f59e0b', fontSize: 12 }} unit="฿" />
+                <Tooltip
+                  contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}
+                />
+                <Area
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="qty"
+                  stroke="#6366f1"
+                  strokeWidth={3}
+                  fillOpacity={1}
+                  fill="url(#colorQty)"
+                />
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="cost"
+                  stroke="#f59e0b"
+                  strokeWidth={3}
+                  dot={{ r: 4, strokeWidth: 2, fill: '#fff', stroke: '#f59e0b' }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* 4. TOP CRITICAL (Pink Bars) */}
+        <div className="bg-white p-8 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col">
+          <div className="mb-6">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-1.5 h-8 bg-pink-500 rounded-full"></div>
+              <h3 className="text-xl font-bold text-slate-800 leading-tight">
+                5 อันดับความเสียหาย<br />(Top Critical Costs)
+              </h3>
+            </div>
+          </div>
+          <div className="flex-1 min-h-[300px]">
+            {financials.costResponsibleData.length > 0 ? (
+              <div className="w-full h-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={financials.costResponsibleData} layout="vertical" margin={{ left: 0, right: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f8fafc" />
+                    <XAxis type="number" hide />
+                    <YAxis
+                      dataKey="name"
+                      type="category"
+                      width={80}
+                      tick={{ fontSize: 11, fill: '#64748b', fontWeight: 600 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      cursor={{ fill: '#fee2e2', opacity: 0.4, radius: 8 }}
+                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
+                      formatter={(val: number) => `฿${val.toLocaleString()}`}
+                    />
+                    <Bar
+                      dataKey="value"
+                      fill="#ec4899"
+                      radius={[0, 10, 10, 0]}
+                      barSize={12}
+                      background={{ fill: '#fce7f3', radius: [0, 10, 10, 0] }}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="h-full flex items-center justify-center text-slate-400 text-sm">ไม่มีข้อมูลค่าใช้จ่าย</div>
+            )}
+          </div>
+        </div>
+
+      </div>
+
+      {/* 5. DISPOSITION MIX (Donut) & NCR */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-12">
+        {/* Donut Chart */}
+        <div className="bg-white p-8 rounded-[2rem] shadow-sm border border-slate-100">
+          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-slate-800"></span>
+            สัดส่วนการจัดการสินค้า (Disposition Mix)
+          </h3>
+          <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={dispositionData}
-                  innerRadius={60}
-                  outerRadius={80}
+                  innerRadius={80}
+                  outerRadius={110}
                   paddingAngle={5}
                   dataKey="value"
+                  cornerRadius={8}
                 >
-                  {dispositionData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
+                  {dispositionData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />)}
                 </Pie>
-                <Tooltip formatter={(value) => `${value} รายการ`} />
-                <Legend verticalAlign="bottom" height={36} />
+                <Tooltip contentStyle={{ borderRadius: '12px' }} />
+                <Legend verticalAlign="middle" align="right" layout="vertical" iconType="circle" />
               </PieChart>
             </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none pb-8">
-              <span className="text-3xl font-bold text-slate-800">
-                {items.filter(i => i.status === 'Completed' || i.status === 'Documented').length}
-              </span>
-              <span className="text-[10px] text-slate-500 uppercase">Decided</span>
-            </div>
           </div>
         </div>
 
-        {/* NCR Root Cause Analysis */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 lg:col-span-2 flex flex-col">
-          <div className="mb-6 flex justify-between items-start">
-            <div>
-              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <AlertOctagon className="w-5 h-5 text-red-500" />
-                วิเคราะห์สาเหตุปัญหา (NCR Root Cause)
-              </h3>
-              <p className="text-xs text-slate-500">สถิติจากระบบ NCR เพื่อการป้องกันปัญหาซ้ำ</p>
-            </div>
-            <div className="text-right">
-              <div className="text-2xl font-bold text-slate-700">{ncrReports.filter(n => n.status !== 'Canceled').length}</div>
-              <div className="text-xs text-slate-500">Active NCR Reports</div>
-            </div>
-          </div>
-
-          <div className="flex-1 w-full min-h-[250px]">
-            {ncrSourceData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={ncrSourceData} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
-                  <XAxis type="number" hide />
-                  <YAxis dataKey="name" type="category" width={140} tick={{ fontSize: 12, fill: '#475569' }} />
-                  <Tooltip
-                    cursor={{ fill: '#f8fafc' }}
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                  />
-                  <Bar dataKey="value" fill="#3b82f6" radius={[0, 4, 4, 0]} barSize={24}>
-                    {ncrSourceData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={index === 0 ? '#ef4444' : '#64748b'} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-slate-400 italic">
-                ยังไม่มีข้อมูล NCR
-              </div>
-            )}
+        {/* NCR Area Chart */}
+        <div className="bg-white p-8 rounded-[2rem] shadow-sm border border-slate-100">
+          <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-purple-600"></span>
+            สาเหตุปัญหา (Problem Sources)
+          </h3>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={ncrStats.rootCauseData} layout="vertical" margin={{ left: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f8fafc" />
+                <XAxis type="number" hide />
+                <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip cursor={{ fill: '#f3e8ff' }} contentStyle={{ borderRadius: '12px' }} />
+                <Bar dataKey="value" fill="#8b5cf6" radius={[0, 8, 8, 0]} barSize={20} background={{ fill: '#f3e8ff', radius: [0, 8, 8, 0] }} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
+      </div>
+      {/* MAINTENANCE ZONE */}
+      <div className="flex flex-col md:flex-row gap-4 justify-center mt-12 mb-8 opacity-70 hover:opacity-100 transition-opacity">
+
+        {/* Sync & Cleanup */}
+        <div className="border border-blue-200 bg-blue-50 rounded-lg p-6 flex flex-col items-center w-64 hover:shadow-md transition-shadow">
+          <h3 className="text-blue-700 font-bold text-sm mb-2 flex items-center gap-2">
+            <RotateCcw className="w-4 h-4" /> Sync & Cleanup Data
+          </h3>
+          <button onClick={handleIntegrityCheck} aria-label="ตรวจสอบและล้างข้อมูลขยะ" className="text-blue-600 underline text-xs cursor-pointer hover:text-blue-800 font-semibold">
+            ตรวจสอบและล้างข้อมูลขยะ
+          </button>
+          <div className="text-[10px] text-blue-400 mt-1">Remove orphaned NCR records</div>
+        </div>
+
+        {/* Factory Reset */}
+        <div className="border border-red-200 bg-red-50 rounded-lg p-6 flex flex-col items-center w-64 hover:shadow-md transition-shadow">
+          <h3 className="text-red-700 font-bold text-sm mb-2 flex items-center gap-2">
+            <Trash2 className="w-4 h-4" /> Data Factory Reset
+          </h3>
+          <button
+            onClick={handleFactoryReset}
+            aria-label="ล้างข้อมูลทั้งหมด (Reset All)"
+            className="text-red-600 underline text-xs cursor-pointer hover:text-red-800"
+          >
+            ล้างข้อมูลทั้งหมด (Reset All)
+          </button>
+          <div className="text-[10px] text-red-300 mt-1">Delete all 100%</div>
+        </div>
+
+      </div>
+
+      {/* Password Modal - REMOVED, REPLACED BY SWAL */}
+
+    </div >
+  );
+};
+
+// Component: CountUpNumber (Kinetic Typography)
+const CountUpNumber = ({ end, duration = 1500 }: { end: number, duration?: number }) => {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let startTime: number | null = null;
+    const animate = (timestamp: number) => {
+      if (!startTime) startTime = timestamp;
+      const progress = timestamp - startTime;
+      const percentage = Math.min(progress / duration, 1);
+
+      // Easing function: easeOutExpo
+      const easeOut = (x: number) => (x === 1 ? 1 : 1 - Math.pow(2, -10 * x));
+
+      setCount(Math.floor(easeOut(percentage) * end));
+
+      if (progress < duration) {
+        requestAnimationFrame(animate);
+      } else {
+        setCount(end);
+      }
+    };
+    requestAnimationFrame(animate);
+  }, [end, duration]);
+
+  return <>{count.toLocaleString()}</>;
+};
+
+// Component: Pipeline Card (Fresh Professional Design)
+const PipelineCard = ({ step, title, count, icon: Icon, variant = 'blue', desc }: { step: string, title: string, count: number, icon: React.ElementType, variant?: string, desc: string }) => {
+  // Color Themes (Pastel & Clean)
+  const themes = {
+    teal: { border: 'border-teal-200', bg: 'bg-teal-50', iconColor: 'text-teal-600', blob: 'bg-teal-100', hoverBorder: 'group-hover:border-teal-400' },
+    blue: { border: 'border-blue-200', bg: 'bg-blue-50', iconColor: 'text-blue-600', blob: 'bg-blue-100', hoverBorder: 'group-hover:border-blue-400' },
+    indigo: { border: 'border-indigo-200', bg: 'bg-indigo-50', iconColor: 'text-indigo-600', blob: 'bg-indigo-100', hoverBorder: 'group-hover:border-indigo-400' },
+    purple: { border: 'border-purple-200', bg: 'bg-purple-50', iconColor: 'text-purple-600', blob: 'bg-purple-100', hoverBorder: 'group-hover:border-purple-400' },
+    amber: { border: 'border-amber-200', bg: 'bg-amber-50', iconColor: 'text-amber-600', blob: 'bg-amber-100', hoverBorder: 'group-hover:border-amber-400' },
+    emerald: { border: 'border-emerald-200', bg: 'bg-emerald-50', iconColor: 'text-emerald-600', blob: 'bg-emerald-100', hoverBorder: 'group-hover:border-emerald-400' },
+    rose: { border: 'border-rose-200', bg: 'bg-rose-50', iconColor: 'text-rose-600', blob: 'bg-rose-100', hoverBorder: 'group-hover:border-rose-400' },
+    slate: { border: 'border-slate-200', bg: 'bg-slate-50', iconColor: 'text-slate-600', blob: 'bg-slate-200', hoverBorder: 'group-hover:border-slate-400' },
+  };
+
+  const theme = themes[variant] || themes.blue;
+
+  return (
+    <div className={`relative p-5 rounded-[2rem] border ${theme.border} ${theme.bg} flex flex-col items-center text-center transition-all duration-300 hover:-translate-y-2 hover:shadow-xl hover:ring-2 hover:ring-offset-2 hover:ring-transparent ${theme.hoverBorder} cursor-pointer overflow-hidden group h-full min-h-[220px]`}>
+      {/* Decorative Blob */}
+      <div className={`absolute -top-6 -right-6 w-24 h-24 rounded-full ${theme.blob} opacity-60 blur-2xl transition-transform duration-500 group-hover:scale-150`}></div>
+
+      {/* Step Label */}
+      <div className="relative z-10 text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 transition-colors group-hover:text-slate-600">
+        Step {step}
+      </div>
+
+      {/* Icon Circle */}
+      <div className={`relative z-10 mb-4 p-4 rounded-full shadow-sm bg-white ring-4 ring-white/50 ${theme.iconColor} transition-transform duration-300 group-hover:scale-110 group-hover:shadow-md`}>
+        <Icon className="w-6 h-6" strokeWidth={1.5} />
+      </div>
+
+      {/* Count */}
+      <div className="relative z-10 text-4xl font-black text-slate-800 mb-2 transition-all group-hover:scale-105">
+        <CountUpNumber end={count} />
+      </div>
+
+      {/* Title */}
+      <div className="relative z-10 text-xs font-bold text-slate-600 truncate w-full mb-1 px-2">
+        {title}
+      </div>
+
+      {/* Desc */}
+      <div className="relative z-10 text-[10px] text-slate-400 font-medium">
+        {desc}
       </div>
     </div>
   );
 };
 
-// Component: Pipeline Card
-const PipelineCard = ({ step, title, count, icon: Icon, color, desc, isAlert }: any) => (
-  <div className={`p-4 rounded-xl border flex flex-col items-center text-center transition-all ${color} ${isAlert ? 'ring-2 ring-red-400 bg-red-50' : ''}`}>
-    <div className="text-[10px] font-bold opacity-60 uppercase mb-1">Step {step}</div>
-    <div className="mb-2 p-2 bg-white bg-opacity-50 rounded-full">
-      <Icon className="w-5 h-5" />
-    </div>
-    <div className={`text-2xl font-bold mb-1 ${isAlert ? 'text-red-600' : ''}`}>{count}</div>
-    <div className="text-xs font-bold truncate w-full">{title}</div>
-    <div className="text-[10px] opacity-70 mt-1">{desc}</div>
-  </div>
-);
+// Component: Stat Card (Financials - Premium Design)
+const StatCard = ({ title, value, subText, icon: Icon, variant = 'default' }: { title: string, value: string, subText: string, icon: React.ElementType, variant: string }) => {
+  // Define styles for different variants
+  const styles = {
+    dark: "bg-slate-900 text-white border-none shadow-xl shadow-slate-200 hover:shadow-slate-400/50",
+    green: "bg-gradient-to-br from-emerald-500 to-teal-600 text-white border-none shadow-xl shadow-emerald-200 hover:shadow-emerald-400/50",
+    orange: "bg-gradient-to-br from-amber-400 to-orange-600 text-white border-none shadow-xl shadow-orange-200 hover:shadow-orange-400/50",
+    red: "bg-gradient-to-br from-red-500 to-rose-600 text-white border-none shadow-xl shadow-red-200 hover:shadow-red-400/50",
+    default: "bg-white text-slate-800 border-slate-100 shadow-sm hover:border-blue-300"
+  };
 
-// Component: Stat Card
-const StatCard = ({ title, value, subText, icon: Icon, color, isAlert }: any) => (
-  <div className={`bg-white rounded-xl shadow-sm border p-5 flex items-start justify-between transition-transform hover:-translate-y-1 duration-200 ${isAlert ? 'border-red-200 bg-red-50/10' : 'border-slate-100'}`}>
-    <div>
-      <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">{title}</p>
-      <h3 className={`text-2xl font-bold mb-1 ${isAlert ? 'text-red-600' : 'text-slate-800'}`}>{value}</h3>
-      <p className="text-xs text-slate-400">{subText}</p>
+  const currentStyle = styles[variant] || styles.default;
+  const isDark = variant !== 'default';
+
+  return (
+    <div className={`relative overflow-hidden rounded-[2rem] p-6 flex flex-col justify-between h-40 transition-all duration-300 hover:-translate-y-2 hover:scale-[1.02] hover:shadow-2xl cursor-pointer group ${currentStyle}`}>
+      {/* Abstract Background Shapes */}
+      {isDark && (
+        <>
+          <div className="absolute top-0 right-0 w-32 h-32 bg-white opacity-5 rounded-full -mr-10 -mt-10 blur-2xl transition-transform group-hover:scale-125 duration-700"></div>
+          <div className="absolute bottom-0 left-0 w-24 h-24 bg-black opacity-10 rounded-full -ml-8 -mb-8 blur-xl transition-transform group-hover:scale-150 duration-700"></div>
+        </>
+      )}
+
+      <div className="relative z-10 flex justify-between items-start">
+        <div>
+          <p className={`text-xs font-bold uppercase tracking-widest mb-1 ${isDark ? 'text-white/70' : 'text-slate-500'}`}>{title}</p>
+          <div className={`p-2 rounded-lg inline-flex ${isDark ? 'bg-white/20 backdrop-blur-sm text-white' : 'bg-slate-100 text-slate-600'}`}>
+            <span className="text-[10px] font-medium">{subText}</span>
+          </div>
+        </div>
+        <div className={`p-3 rounded-2xl ${isDark ? 'bg-white/20 backdrop-blur-md text-white' : 'bg-slate-100 text-slate-600'} transition-transform group-hover:rotate-12`}>
+          <Icon className="w-6 h-6" />
+        </div>
+      </div>
+
+      <div className="relative z-10 mt-auto">
+        <h3 className="text-3xl font-black tracking-tight group-hover:scale-105 transition-transform origin-left">{value}</h3>
+      </div>
     </div>
-    <div className={`p-3 rounded-lg shadow-sm ${color} text-white`}>
-      <Icon className="w-5 h-5" />
+  );
+};
+
+// Component: Stock Card (Vibrant Pill Design)
+const StockCard = ({ title, count, variant, icon: Icon, subTitle }: { title: string, count: number, variant: string, icon?: React.ElementType, subTitle: string }) => {
+  const styles = {
+    blue: "bg-gradient-to-br from-[#4f46e5] to-[#3b82f6] shadow-indigo-300", // Indigo - Blue
+    orange: "bg-gradient-to-br from-[#f97316] to-[#ef4444] shadow-orange-300", // Orange - Red
+    green: "bg-gradient-to-br from-[#10b981] to-[#059669] shadow-emerald-300", // Emerald
+    purple: "bg-gradient-to-br from-[#a855f7] to-[#d946ef] shadow-purple-300", // Purple - Fuchsia
+    red: "bg-gradient-to-br from-[#ef4444] to-[#be123c] shadow-rose-300",     // Red
+    amber: "bg-gradient-to-br from-[#f59e0b] to-[#d97706] shadow-amber-300",   // Amber
+    slate: "bg-gradient-to-br from-[#64748b] to-[#475569] shadow-slate-300",   // Slate
+  };
+
+  const style = styles[variant] || styles.slate;
+
+  return (
+    <div className={`relative overflow-hidden rounded-[2rem] p-6 h-44 flex flex-col justify-between shadow-xl transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl cursor-pointer group ${style}`}>
+
+      {/* Background Icon Watermark */}
+      {Icon && (
+        <div className="absolute -bottom-6 -right-6 opacity-20 transform rotate-[-10deg] group-hover:scale-110 group-hover:rotate-0 transition-all duration-500 ease-out">
+          <Icon className="w-36 h-36 text-white" strokeWidth={1} />
+        </div>
+      )}
+
+      {/* Top Label */}
+      <div className="relative z-10">
+        <div className="text-white/90 text-sm font-bold tracking-wide mb-1 drop-shadow-sm flex items-center gap-2">
+          <span className="w-1.5 h-1.5 bg-white rounded-full inline-block"></span>
+          {title}
+        </div>
+      </div>
+
+      {/* Main Number */}
+      <div className="relative z-10 text-white font-black text-6xl leading-none tracking-tight drop-shadow-md flex items-baseline gap-2 my-2">
+        <CountUpNumber end={count} />
+        <span className="text-xl font-bold opacity-70 tracking-normal">ชิ้น</span>
+      </div>
+
+      {/* Bottom Badge */}
+      <div className="relative z-10 self-start mt-auto">
+        <div className="bg-white/20 backdrop-blur-md rounded-full px-4 py-1.5 border border-white/10 text-[10px] font-bold text-white tracking-widest uppercase shadow-sm">
+          {subTitle || 'STATUS'}
+        </div>
+      </div>
+
     </div>
-  </div>
-);
+  );
+};
 
 export default Dashboard;
