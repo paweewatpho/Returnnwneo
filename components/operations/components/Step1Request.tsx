@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FileText, PlusCircle, Save, Package, AlertTriangle, User, Calculator, CheckCircle, ChevronLeft, ChevronRight, Eye, X } from 'lucide-react';
+import { FileText, PlusCircle, Save, Package, AlertTriangle, User, Calculator, CheckCircle, ChevronLeft, ChevronRight, Eye, X, MapPin } from 'lucide-react';
 import { ReturnRecord } from '../../../types';
 import { ConfirmSubmitModal } from './ConfirmSubmitModal';
 import { ItemAnalysisModal } from './ItemAnalysisModal';
@@ -379,7 +379,13 @@ export const Step1Request: React.FC<Step1RequestProps> = ({
                             />
                         )}
 
-                        <div className="flex justify-end pt-4 mt-4 border-t border-slate-100">
+                        <div className="flex justify-between items-center pt-4 mt-4 border-t border-slate-100">
+                            <button
+                                onClick={() => setCurrentStep(3)}
+                                className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 py-2 rounded-lg shadow-md hover:shadow-lg hover:scale-105 transition-all font-bold text-sm"
+                            >
+                                <PlusCircle className="w-4 h-4" /> เพิ่มรายการอื่น (Add More)
+                            </button>
                             <div className="text-right">
                                 <p className="text-sm text-slate-500">จำนวนรายการทั้งหมด: <span className="font-bold text-slate-800">{requestItems.length}</span> รายการ</p>
                             </div>
@@ -490,7 +496,7 @@ export const Step1Request: React.FC<Step1RequestProps> = ({
                             >
                                 {currentStep === 4 ? (
                                     <>
-                                        <PlusCircle className="w-5 h-5" /> เพิ่มรายการ (Add Item)
+                                        <MapPin className="w-5 h-5" /> ระบุเส้นทางส่งคืน (Return Route)
                                     </>
                                 ) : (
                                     <>
